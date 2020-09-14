@@ -21,7 +21,7 @@ type cgroupCPU struct {
 	usage     uint64
 }
 
-func newCgroupCPU() (cpu *cgroupCPU, err error) {
+func newCGroupCPU() (cpu *cgroupCPU, err error) {
 	var cores int
 	cores, err = pscpu.Counts(true)
 	if err != nil || cores == 0 {

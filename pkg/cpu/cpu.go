@@ -25,7 +25,7 @@ func init() {
 	var (
 		err error
 	)
-	stats, err = newCgroupCPU()
+	stats, err = newCGroupCPU()
 	if err != nil {
 		// fmt.Printf("cgroup cpu init failed(%v),switch to psutil cpu\n", err)
 		stats, err = newPsutilCPU(interval)

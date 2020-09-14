@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	cpustat "git.medlinker.com/service/grpcwrapper/pkg/cpu"
-	"git.medlinker.com/service/grpcwrapper/pkg/metric"
-	limit "git.medlinker.com/service/grpcwrapper/pkg/ratelimit"
+	limit "github.com/yeqown/ratelimit"
+	cpustat "github.com/yeqown/ratelimit/pkg/cpu"
+	"github.com/yeqown/ratelimit/pkg/metric"
 )
 
 var (
@@ -207,7 +207,8 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 	}, nil
 }
 
-func newLimiter(conf *Config) limit.Limiter {
+// NewLimiter 创建一个limiter
+func NewLimiter(conf *Config) limit.Limiter {
 	if conf == nil {
 		conf = defaultConf
 	}
@@ -227,29 +228,3 @@ func newLimiter(conf *Config) limit.Limiter {
 	}
 	return limiter
 }
-
-//
-//// Group represents a class of BBRLimiter and forms a namespace in which
-//// units of BBRLimiter.
-//type Group struct {
-//	group *group.Group
-//}
-//
-//// NewGroup new a limiter group container, if conf nil use default conf.
-//func NewGroup(conf *Config) *Group {
-//	if conf == nil {
-//		conf = defaultConf
-//	}
-//	group := group.NewGroup(func() interface{} {
-//		return newLimiter(conf)
-//	})
-//	return &Group{
-//		group: group,
-//	}
-//}
-//
-//// Get get a limiter by a specified key, if limiter not exists then make a new one.
-//func (g *Group) Get(key string) limit.Limiter {
-//	limiter := g.group.Get(key)
-//	return limiter.(limit.Limiter)
-//}
