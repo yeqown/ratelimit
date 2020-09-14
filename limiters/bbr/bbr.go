@@ -45,19 +45,19 @@ func cpuproc() {
 	for range ticker.C {
 		stat := &cpustat.Stat{}
 		cpustat.ReadStat(stat)
-		prevCpu := atomic.LoadInt64(&cpu)
-		curCpu := int64(float64(prevCpu)*decay + float64(stat.Usage)*(1.0-decay))
-		atomic.StoreInt64(&cpu, curCpu)
+		pre := atomic.LoadInt64(&cpu)
+		cur := int64(float64(pre)*decay + float64(stat.Usage)*(1.0-decay))
+		atomic.StoreInt64(&cpu, cur)
 	}
 }
 
-// Stats contains the metrics's snapshot of bbr.
+// Stats contains the metrics' snapshot of bbr.
 type Stat struct {
-	Cpu         int64
+	CPU         int64
 	InFlight    int64
 	MaxInFlight int64
-	MinRt       int64
-	MaxPass     int64
+	MinRT       int64 // the minimum RT
+	MaxPass     int64 // the maximum ?
 }
 
 // BBR implements bbr-like limiter.
@@ -91,32 +91,42 @@ func (l *BBR) maxPASS() int64 {
 	if rawMaxPass > 0 && l.passStat.Timespan() < 1 {
 		return rawMaxPass
 	}
-	rawMaxPass = int64(l.passStat.Reduce(func(iterator metric.Iterator) float64 {
-		var result = 1.0
+
+	f := l.passStat.Reduce(func(iterator metric.Iterator) (r float64) {
+		r = 1.0
+
 		for i := 1; iterator.Next() && i < l.conf.WinBucket; i++ {
 			bucket := iterator.Bucket()
 			count := 0.0
 			for _, p := range bucket.Points {
 				count += p
 			}
-			result = math.Max(result, count)
+
+			r = math.Max(r, count)
 		}
-		return result
-	}))
+
+		return
+	})
+
+	rawMaxPass = int64(f)
 	if rawMaxPass == 0 {
 		rawMaxPass = 1
 	}
 	atomic.StoreInt64(&l.rawMaxPASS, rawMaxPass)
+
 	return rawMaxPass
 }
 
+// minRT get minimum RT from rtStat
 func (l *BBR) minRT() int64 {
 	rawMinRT := atomic.LoadInt64(&l.rawMinRt)
 	if rawMinRT > 0 && l.rtStat.Timespan() < 1 {
 		return rawMinRT
 	}
-	rawMinRT = int64(math.Ceil(l.rtStat.Reduce(func(iterator metric.Iterator) float64 {
-		var result = math.MaxFloat64
+
+	f := l.rtStat.Reduce(func(iterator metric.Iterator) (r float64) {
+		r = math.MaxFloat64
+
 		for i := 1; iterator.Next() && i < l.conf.WinBucket; i++ {
 			bucket := iterator.Bucket()
 			if len(bucket.Points) == 0 {
@@ -127,14 +137,18 @@ func (l *BBR) minRT() int64 {
 				total += p
 			}
 			avg := total / float64(bucket.Count)
-			result = math.Min(result, avg)
+			r = math.Min(r, avg)
 		}
-		return result
-	})))
+
+		return r
+	})
+
+	rawMinRT = int64(math.Ceil(f))
 	if rawMinRT <= 0 {
 		rawMinRT = 1
 	}
 	atomic.StoreInt64(&l.rawMinRt, rawMinRT)
+
 	return rawMinRT
 }
 
@@ -148,6 +162,7 @@ func (l *BBR) shouldDrop() bool {
 		if prevDrop == 0 {
 			return false
 		}
+
 		if time.Since(initTime)-prevDrop <= time.Second {
 			if atomic.LoadInt32(&l.prevDropHit) == 0 {
 				atomic.StoreInt32(&l.prevDropHit, 1)
@@ -156,8 +171,10 @@ func (l *BBR) shouldDrop() bool {
 			return inFlight > 1 && inFlight > l.maxFlight()
 		}
 		l.prevDrop.Store(time.Duration(0))
+
 		return false
 	}
+
 	inFlight := atomic.LoadInt64(&l.inFlight)
 	drop := inFlight > 1 && inFlight > l.maxFlight()
 	if drop {
@@ -167,15 +184,16 @@ func (l *BBR) shouldDrop() bool {
 		}
 		l.prevDrop.Store(time.Since(initTime))
 	}
+
 	return drop
 }
 
 // Stat tasks a snapshot of the bbr limiter.
 func (l *BBR) Stat() Stat {
 	return Stat{
-		Cpu:         l.cpu(),
+		CPU:         l.cpu(),
 		InFlight:    atomic.LoadInt64(&l.inFlight),
-		MinRt:       l.minRT(),
+		MinRT:       l.minRT(),
 		MaxPass:     l.maxPASS(),
 		MaxInFlight: l.maxFlight(),
 	}
@@ -192,9 +210,9 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 		return nil, limit.ErrLimitExceed
 	}
 	atomic.AddInt64(&l.inFlight, 1)
-	stime := time.Since(initTime)
+	start := time.Since(initTime)
 	return func(do limit.DoneInfo) {
-		rt := int64((time.Since(initTime) - stime) / time.Millisecond)
+		rt := int64((time.Since(initTime) - start) / time.Millisecond)
 		l.rtStat.Add(rt)
 		atomic.AddInt64(&l.inFlight, -1)
 		switch do.Op {
@@ -226,5 +244,6 @@ func NewLimiter(conf *Config) limit.Limiter {
 		rtStat:          rtStat,
 		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)),
 	}
+
 	return limiter
 }
