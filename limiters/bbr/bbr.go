@@ -2,20 +2,15 @@ package bbr
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"os"
 	"sync/atomic"
 	"time"
 
 	limit "github.com/yeqown/ratelimit"
-	cpustat "github.com/yeqown/ratelimit/pkg/cpu"
 	"github.com/yeqown/ratelimit/pkg/metric"
 )
 
 var (
-	cpu         int64
-	decay       = 0.95
 	initTime    = time.Now()
 	defaultConf = &Config{
 		Window:       time.Second * 10,
@@ -24,40 +19,14 @@ var (
 	}
 )
 
-type cpuGetter func() int64
-
-func init() {
-	go cpuproc()
-}
-
-// cpu = cpuᵗ⁻¹ * decay + cpuᵗ * (1 - decay)
-func cpuproc() {
-	ticker := time.NewTicker(time.Millisecond * 250)
-	defer func() {
-		ticker.Stop()
-		if err := recover(); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "rate.limit.cpuproc() err(%+v)", err)
-			go cpuproc()
-		}
-	}()
-
-	// EMA algorithm: https://blog.csdn.net/m0_38106113/article/details/81542863
-	for range ticker.C {
-		stat := &cpustat.Stat{}
-		cpustat.ReadStat(stat)
-		pre := atomic.LoadInt64(&cpu)
-		cur := int64(float64(pre)*decay + float64(stat.Usage)*(1.0-decay))
-		atomic.StoreInt64(&cpu, cur)
-	}
-}
-
-// Stats contains the metrics' snapshot of bbr.
-type Stat struct {
-	CPU         int64
-	InFlight    int64
-	MaxInFlight int64
-	MinRT       int64 // the minimum RT
-	MaxPass     int64 // the maximum ?
+// Config contains configs of bbr limiter.
+type Config struct {
+	Enabled      bool
+	Window       time.Duration
+	WinBucket    int
+	Rule         string
+	Debug        bool
+	CPUThreshold int64
 }
 
 // BBR implements bbr-like limiter.
@@ -76,19 +45,34 @@ type BBR struct {
 	rawMinRt        int64
 }
 
-// Config contains configs of bbr limiter.
-type Config struct {
-	Enabled      bool
-	Window       time.Duration
-	WinBucket    int
-	Rule         string
-	Debug        bool
-	CPUThreshold int64
+// NewLimiter create a limit.Limiter
+func NewLimiter(conf *Config) limit.Limiter {
+	if conf == nil {
+		conf = defaultConf
+	}
+
+	size := conf.WinBucket
+	bucketDuration := conf.Window / time.Duration(conf.WinBucket)
+	passStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
+	rtStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
+	var getter cpuGetter = func() int64 {
+		return atomic.LoadInt64(&cpu)
+	}
+
+	limiter := &BBR{
+		cpu:             getter,
+		conf:            conf,
+		passStat:        passStat,
+		rtStat:          rtStat,
+		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)),
+	}
+
+	return limiter
 }
 
 func (l *BBR) maxPASS() int64 {
 	rawMaxPass := atomic.LoadInt64(&l.rawMaxPASS)
-	if rawMaxPass > 0 && l.passStat.Timespan() < 1 {
+	if rawMaxPass > 0 && l.passStat.TimeSpan() < 1 {
 		return rawMaxPass
 	}
 
@@ -120,7 +104,7 @@ func (l *BBR) maxPASS() int64 {
 // minRT get minimum RT from rtStat
 func (l *BBR) minRT() int64 {
 	rawMinRT := atomic.LoadInt64(&l.rawMinRt)
-	if rawMinRT > 0 && l.rtStat.Timespan() < 1 {
+	if rawMinRT > 0 && l.rtStat.TimeSpan() < 1 {
 		return rawMinRT
 	}
 
@@ -188,6 +172,15 @@ func (l *BBR) shouldDrop() bool {
 	return drop
 }
 
+// Stats contains the metrics' snapshot of bbr.
+type Stat struct {
+	CPU         int64 // CPU load
+	InFlight    int64
+	MaxInFlight int64
+	MinRT       int64 // the minimum RT
+	MaxPass     int64 // the maximum ?
+}
+
 // Stat tasks a snapshot of the bbr limiter.
 func (l *BBR) Stat() Stat {
 	return Stat{
@@ -200,21 +193,25 @@ func (l *BBR) Stat() Stat {
 }
 
 // Allow checks all inbound traffic.
-// Once overload is detected, it raises ecode.LimitExceed error.
+// Once overload is detected, it raises limit.ErrLimitExceed error.
 func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info limit.DoneInfo), error) {
 	allowOpts := limit.DefaultAllowOpts()
 	for _, opt := range opts {
 		opt.Apply(&allowOpts)
 	}
+
 	if l.shouldDrop() {
 		return nil, limit.ErrLimitExceed
 	}
+
 	atomic.AddInt64(&l.inFlight, 1)
 	start := time.Since(initTime)
+
 	return func(do limit.DoneInfo) {
 		rt := int64((time.Since(initTime) - start) / time.Millisecond)
 		l.rtStat.Add(rt)
 		atomic.AddInt64(&l.inFlight, -1)
+
 		switch do.Op {
 		case limit.Success:
 			l.passStat.Add(1)
@@ -222,28 +219,6 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 		default:
 			return
 		}
+
 	}, nil
-}
-
-// NewLimiter 创建一个limiter
-func NewLimiter(conf *Config) limit.Limiter {
-	if conf == nil {
-		conf = defaultConf
-	}
-	size := conf.WinBucket
-	bucketDuration := conf.Window / time.Duration(conf.WinBucket)
-	passStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
-	rtStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
-	cpu := func() int64 {
-		return atomic.LoadInt64(&cpu)
-	}
-	limiter := &BBR{
-		cpu:             cpu,
-		conf:            conf,
-		passStat:        passStat,
-		rtStat:          rtStat,
-		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)),
-	}
-
-	return limiter
 }

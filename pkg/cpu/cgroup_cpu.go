@@ -11,6 +11,8 @@ import (
 	pscpu "github.com/shirou/gopsutil/cpu"
 )
 
+var _ CPU = new(cgroupCPU)
+
 type cgroupCPU struct {
 	frequency uint64
 	quota     float64

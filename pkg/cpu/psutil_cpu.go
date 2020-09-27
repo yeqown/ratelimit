@@ -6,6 +6,8 @@ import (
 	"github.com/shirou/gopsutil/cpu"
 )
 
+var _ CPU = new(psutilCPU)
+
 type psutilCPU struct {
 	interval time.Duration
 }

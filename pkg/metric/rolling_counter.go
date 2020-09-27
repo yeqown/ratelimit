@@ -6,14 +6,18 @@ import (
 )
 
 var _ Metric = &rollingCounter{}
-var _ Aggregation = &rollingCounter{}
 
 // RollingCounter represents a ring window based on time duration.
 // e.g. [[1], [3], [5]]
 type RollingCounter interface {
 	Metric
-	Aggregation
-	Timespan() int
+
+	// Sum get sum of
+	Sum() float64
+
+	// TimeSpan .
+	TimeSpan() int
+
 	// Reduce applies the reduction function to all buckets within the window.
 	Reduce(func(Iterator) float64) float64
 }
@@ -41,33 +45,26 @@ func (r *rollingCounter) Add(val int64) {
 	if val < 0 {
 		panic(fmt.Errorf("stat/metric: cannot decrease in value. val: %d", val))
 	}
+
 	r.policy.Add(float64(val))
 }
 
+// Reduce .
 func (r *rollingCounter) Reduce(f func(Iterator) float64) float64 {
 	return r.policy.Reduce(f)
 }
 
-func (r *rollingCounter) Avg() float64 {
-	return r.policy.Reduce(Avg)
-}
-
-func (r *rollingCounter) Min() float64 {
-	return r.policy.Reduce(Min)
-}
-
-func (r *rollingCounter) Max() float64 {
-	return r.policy.Reduce(Max)
-}
-
+// Sum .
 func (r *rollingCounter) Sum() float64 {
 	return r.policy.Reduce(Sum)
 }
 
+// Value .
 func (r *rollingCounter) Value() int64 {
 	return int64(r.Sum())
 }
 
-func (r *rollingCounter) Timespan() int {
+// TimeSpan .
+func (r *rollingCounter) TimeSpan() int {
 	return r.policy.timespan()
 }

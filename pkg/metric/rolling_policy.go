@@ -38,24 +38,26 @@ func NewRollingPolicy(window *Window, opts RollingPolicyOpts) *RollingPolicy {
 
 func (r *RollingPolicy) timespan() int {
 	v := int(time.Since(r.lastAppendTime) / r.bucketDuration)
-	if v > -1 { // maybe time backwards
+	if v > -1 {
+		// maybe time backwards
 		return v
 	}
+
 	return r.size
 }
 
 func (r *RollingPolicy) add(f func(offset int, val float64), val float64) {
 	r.mu.Lock()
-	timespan := r.timespan()
-	if timespan > 0 {
-		r.lastAppendTime = r.lastAppendTime.Add(time.Duration(timespan * int(r.bucketDuration)))
+	sp := r.timespan()
+	if sp > 0 {
+		r.lastAppendTime = r.lastAppendTime.Add(time.Duration(sp * int(r.bucketDuration)))
 		offset := r.offset
 		// reset the expired buckets
 		s := offset + 1
-		if timespan > r.size {
-			timespan = r.size
+		if sp > r.size {
+			sp = r.size
 		}
-		e, e1 := s+timespan, 0 // e: reset offset must start from offset+1
+		e, e1 := s+sp, 0 // e: reset offset must start from offset+1
 		if e > r.size {
 			e1 = e - r.size
 			e = r.size
@@ -87,9 +89,9 @@ func (r *RollingPolicy) Add(val float64) {
 // Reduce applies the reduction function to all buckets within the window.
 func (r *RollingPolicy) Reduce(f func(Iterator) float64) (val float64) {
 	r.mu.RLock()
-	timespan := r.timespan()
-	if count := r.size - timespan; count > 0 {
-		offset := r.offset + timespan + 1
+	sp := r.timespan()
+	if count := r.size - sp; count > 0 {
+		offset := r.offset + sp + 1
 		if offset >= r.size {
 			offset = offset - r.size
 		}

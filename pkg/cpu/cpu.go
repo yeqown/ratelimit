@@ -22,9 +22,7 @@ type CPU interface {
 }
 
 func init() {
-	var (
-		err error
-	)
+	var err error
 	stats, err = newCGroupCPU()
 	if err != nil {
 		// fmt.Printf("cgroup cpu init failed(%v),switch to psutil cpu\n", err)
@@ -33,11 +31,12 @@ func init() {
 			panic(fmt.Sprintf("cgroup cpu init failed!err:=%v", err))
 		}
 	}
+
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for {
-			<-ticker.C
+
+		for range ticker.C {
 			u, err := stats.Usage()
 			if err == nil && u != 0 {
 				atomic.StoreUint64(&usage, u)
