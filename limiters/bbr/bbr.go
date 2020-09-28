@@ -21,11 +21,13 @@ var (
 
 // Config contains configs of bbr limiter.
 type Config struct {
-	Enabled      bool
-	Window       time.Duration
-	WinBucket    int
-	Rule         string
-	Debug        bool
+	// Window .
+	Window time.Duration
+
+	// WinBucket .
+	WinBucket int
+
+	// CPUThreshold .
 	CPUThreshold int64
 }
 
@@ -33,16 +35,21 @@ type Config struct {
 // It is inspired by sentinel.
 // https://github.com/alibaba/Sentinel/wiki/%E7%B3%BB%E7%BB%9F%E8%87%AA%E9%80%82%E5%BA%94%E9%99%90%E6%B5%81
 type BBR struct {
+	conf            *Config
 	cpu             cpuGetter
 	passStat        metric.RollingCounter
 	rtStat          metric.RollingCounter
 	inFlight        int64
 	winBucketPerSec int64
-	conf            *Config
-	prevDrop        atomic.Value
-	prevDropHit     int32
-	rawMaxPASS      int64
-	rawMinRt        int64
+
+	// prevDrop the previous dropped request's time gap from initTime
+	// if this is not 0, means the system need to limit traffic
+	prevDrop atomic.Value
+	// prevDropHit shows is there a dropped request
+	prevDropHit int32
+
+	rawMaxPASS int64
+	rawMinRt   int64
 }
 
 // NewLimiter create a limit.Limiter
@@ -136,37 +143,49 @@ func (l *BBR) minRT() int64 {
 	return rawMinRT
 }
 
+// maxFlight = math.Floor((MaxPass * MinRT * WindowSize)/1000 + 0.5)
 func (l *BBR) maxFlight() int64 {
 	return int64(math.Floor(float64(l.maxPASS()*l.minRT()*l.winBucketPerSec)/1000.0 + 0.5))
 }
 
+// shouldDrop means is there need to limit request
 func (l *BBR) shouldDrop() bool {
 	if l.cpu() < l.conf.CPUThreshold {
+		// cpu is less than conf.CPUThreshold, then get prevDrop
 		prevDrop, _ := l.prevDrop.Load().(time.Duration)
 		if prevDrop == 0 {
+			// cpu is ok and no previous dropped request, just pass
 			return false
 		}
 
 		if time.Since(initTime)-prevDrop <= time.Second {
+			// if previous dropped request happened before and over than 1s.
+			// this means to limit request
 			if atomic.LoadInt32(&l.prevDropHit) == 0 {
+				// mark previousDropHit flag to true
+				// FIXME: no place to reset and use?
 				atomic.StoreInt32(&l.prevDropHit, 1)
 			}
+
 			inFlight := atomic.LoadInt64(&l.inFlight)
 			return inFlight > 1 && inFlight > l.maxFlight()
 		}
-		l.prevDrop.Store(time.Duration(0))
 
+		// no need to limit and  drop request.
+		// clear previous dropped request gap
+		l.prevDrop.Store(time.Duration(0))
 		return false
 	}
 
+	// cpu is exceed limit
 	inFlight := atomic.LoadInt64(&l.inFlight)
 	drop := inFlight > 1 && inFlight > l.maxFlight()
 	if drop {
 		prevDrop, _ := l.prevDrop.Load().(time.Duration)
-		if prevDrop != 0 {
-			return drop
+		if prevDrop == 0 {
+			// update the prevDrop at when only the current request should drop and prevDrop is not exists
+			l.prevDrop.Store(time.Since(initTime))
 		}
-		l.prevDrop.Store(time.Since(initTime))
 	}
 
 	return drop
@@ -174,9 +193,9 @@ func (l *BBR) shouldDrop() bool {
 
 // Stats contains the metrics' snapshot of bbr.
 type Stat struct {
-	CPU         int64 // CPU load
-	InFlight    int64
-	MaxInFlight int64
+	CPU         int64 // CPU usage
+	InFlight    int64 // count of requests in flight
+	MaxInFlight int64 // the maximum count of requests could be handled by system
 	MinRT       int64 // the minimum RT
 	MaxPass     int64 // the maximum ?
 }
