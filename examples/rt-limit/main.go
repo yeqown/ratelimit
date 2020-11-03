@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	limit "github.com/yeqown/ratelimit"
-
-	"github.com/yeqown/ratelimit/limiters/bbr"
+	"github.com/yeqown/ratelimit"
+	"github.com/yeqown/ratelimit/limiter/bbr"
 )
 
 func init() {
@@ -48,7 +47,7 @@ func withRatelimiter(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		defer done(limit.DoneInfo{Op: limit.Success})
+		defer done(ratelimit.DoneInfo{Op: ratelimit.Success})
 
 		f(w, req)
 	}

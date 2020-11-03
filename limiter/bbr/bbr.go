@@ -15,7 +15,7 @@ var (
 	defaultConf = &Config{
 		Window:       time.Second * 10,
 		WinBucket:    100,
-		CPUThreshold: 800,
+		CPUThreshold: 500, // cores * 2.5
 	}
 )
 
@@ -39,17 +39,19 @@ type BBR struct {
 	cpu             cpuGetter
 	passStat        metric.RollingCounter
 	rtStat          metric.RollingCounter
-	inFlight        int64
-	winBucketPerSec int64
+	inFlight        int64 // requests in dealing
+	winBucketPerSec int64 //
 
 	// prevDrop the previous dropped request's time gap from initTime
 	// if this is not 0, means the system need to limit traffic
 	prevDrop atomic.Value
 	// prevDropHit shows is there a dropped request
-	prevDropHit int32
+	//prevDropHit int32
 
-	rawMaxPASS int64
-	rawMinRt   int64
+	// rawMaxPass means BDP (Bandwidth Delayed Product)
+	rawMaxPass int64
+	// rawMinRT means minRTT
+	rawMinRT int64
 }
 
 // NewLimiter create a limit.Limiter
@@ -60,8 +62,9 @@ func NewLimiter(conf *Config) limit.Limiter {
 
 	size := conf.WinBucket
 	bucketDuration := conf.Window / time.Duration(conf.WinBucket)
-	passStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
-	rtStat := metric.NewRollingCounter(metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration})
+	opt := metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration}
+	passStat := metric.NewRollingCounter(opt)
+	rtStat := metric.NewRollingCounter(opt)
 	var getter cpuGetter = func() int64 {
 		return atomic.LoadInt64(&cpu)
 	}
@@ -71,14 +74,14 @@ func NewLimiter(conf *Config) limit.Limiter {
 		conf:            conf,
 		passStat:        passStat,
 		rtStat:          rtStat,
-		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)),
+		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)), // 1 / 10 * 1000 = 100
 	}
 
 	return limiter
 }
 
 func (l *BBR) maxPASS() int64 {
-	rawMaxPass := atomic.LoadInt64(&l.rawMaxPASS)
+	rawMaxPass := atomic.LoadInt64(&l.rawMaxPass)
 	if rawMaxPass > 0 && l.passStat.TimeSpan() < 1 {
 		return rawMaxPass
 	}
@@ -103,14 +106,15 @@ func (l *BBR) maxPASS() int64 {
 	if rawMaxPass == 0 {
 		rawMaxPass = 1
 	}
-	atomic.StoreInt64(&l.rawMaxPASS, rawMaxPass)
+	atomic.StoreInt64(&l.rawMaxPass, rawMaxPass)
 
 	return rawMaxPass
 }
 
 // minRT get minimum RT from rtStat
+// FIXME: minRT is not right
 func (l *BBR) minRT() int64 {
-	rawMinRT := atomic.LoadInt64(&l.rawMinRt)
+	rawMinRT := atomic.LoadInt64(&l.rawMinRT)
 	if rawMinRT > 0 && l.rtStat.TimeSpan() < 1 {
 		return rawMinRT
 	}
@@ -138,7 +142,8 @@ func (l *BBR) minRT() int64 {
 	if rawMinRT <= 0 {
 		rawMinRT = 1
 	}
-	atomic.StoreInt64(&l.rawMinRt, rawMinRT)
+
+	atomic.StoreInt64(&l.rawMinRT, rawMinRT)
 
 	return rawMinRT
 }
@@ -149,6 +154,7 @@ func (l *BBR) maxFlight() int64 {
 }
 
 // shouldDrop means is there need to limit request
+// https://github.com/alibaba/sentinel-golang/blob/master/core/system/slot.go
 func (l *BBR) shouldDrop() bool {
 	if l.cpu() < l.conf.CPUThreshold {
 		// cpu is less than conf.CPUThreshold, then get prevDrop
@@ -161,12 +167,11 @@ func (l *BBR) shouldDrop() bool {
 		if time.Since(initTime)-prevDrop <= time.Second {
 			// if previous dropped request happened before and over than 1s.
 			// this means to limit request
-			if atomic.LoadInt32(&l.prevDropHit) == 0 {
-				// mark previousDropHit flag to true
-				// FIXME: no place to reset and use?
-				atomic.StoreInt32(&l.prevDropHit, 1)
-			}
-
+			//if atomic.LoadInt32(&l.prevDropHit) == 0 {
+			//	// mark previousDropHit flag to true
+			//	// FIXME: no place to reset and use?
+			//	atomic.StoreInt32(&l.prevDropHit, 1)
+			//}
 			inFlight := atomic.LoadInt64(&l.inFlight)
 			return inFlight > 1 && inFlight > l.maxFlight()
 		}
