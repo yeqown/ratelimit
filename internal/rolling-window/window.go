@@ -2,6 +2,7 @@ package rollingwin
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -47,10 +48,11 @@ func (w *RollingWindow) init() {
 func (w *RollingWindow) Add(val int64) {
 	// sp which Bucket to insert the val.
 	sp := w.TimeSpan()
-	// TODO: reset expired buckets
+	offset := atomic.LoadUint32(&w.lastSp)
+
 	if sp > 0 {
+		// reset expired buckets, sp means how many buckets to clear
 		w.lastAppend = w.lastAppend.Add(w.bucketDuration * time.Duration(sp))
-		offset := w.lastSp
 		// get start position
 		s := w.lastSp + 1
 		if sp > w.size {
@@ -63,6 +65,7 @@ func (w *RollingWindow) Add(val int64) {
 			e2 = e1 - w.size
 			e1 = w.size
 		}
+
 		// reset buckets
 		for i := s; i < e1; i++ {
 			w.ringBuckets[i].reset()
@@ -72,12 +75,11 @@ func (w *RollingWindow) Add(val int64) {
 			w.ringBuckets[i].reset()
 			offset = i
 		}
-		w.lastSp = offset
+		atomic.StoreUint32(&w.lastSp, offset)
 	}
 
 	// calculate which position to append the data.
-	w.lastSp = sp
-	w.ringBuckets[sp].append(val)
+	w.ringBuckets[offset].append(val)
 }
 
 func (w *RollingWindow) Iterate(iterator func(b *Bucket)) {
