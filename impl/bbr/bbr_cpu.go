@@ -9,6 +9,10 @@ import (
 	cpustat "github.com/yeqown/ratelimit/internal/cpu"
 )
 
+const (
+	_QueryCPUdelay = 100 * time.Second
+)
+
 var (
 	// cpu is the load value of present CPU
 	cpu int64
@@ -17,16 +21,14 @@ var (
 	decay = 0.95
 )
 
-type cpuGetter func() int64
-
-func init() {
-	go cpuproc()
+func cpugetter() int64 {
+	return atomic.LoadInt64(&cpu)
 }
 
 // cpuproc always get "Moving Average" of current cpu usage.
 // cpu = cpuᵗ⁻¹ * decay + cpuᵗ * (1 - decay)
 func cpuproc() {
-	ticker := time.NewTicker(time.Millisecond * 250)
+	ticker := time.NewTicker(_QueryCPUdelay)
 	defer func() {
 		ticker.Stop()
 		if err := recover(); err != nil {

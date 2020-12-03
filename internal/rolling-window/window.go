@@ -44,7 +44,7 @@ func (w *RollingWindow) init() {
 	}
 }
 
-// TODO: concurrent visit
+// Add variable into window.
 func (w *RollingWindow) Add(val int64) {
 	// sp which Bucket to insert the val.
 	sp := w.TimeSpan()
