@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/yeqown/ratelimit"
-	"github.com/yeqown/ratelimit/limiter/bbr"
+	"github.com/yeqown/ratelimit/impl/bbr"
 )
 
 func init() {

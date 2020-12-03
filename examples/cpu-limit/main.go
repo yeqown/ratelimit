@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yeqown/ratelimit/impl/bbr"
+
 	"github.com/yeqown/ratelimit"
-	"github.com/yeqown/ratelimit/limiter/bbr"
 )
 
 func init() {

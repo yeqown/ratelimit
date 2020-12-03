@@ -7,7 +7,7 @@ import (
 	"time"
 
 	limit "github.com/yeqown/ratelimit"
-	"github.com/yeqown/ratelimit/pkg/metric"
+	rw "github.com/yeqown/ratelimit/internal/rolling-window"
 )
 
 var (
@@ -23,10 +23,8 @@ var (
 type Config struct {
 	// Window .
 	Window time.Duration
-
 	// WinBucket .
 	WinBucket int
-
 	// CPUThreshold .
 	CPUThreshold int64
 }
@@ -37,8 +35,8 @@ type Config struct {
 type BBR struct {
 	conf            *Config
 	cpu             cpuGetter
-	passStat        metric.RollingCounter
-	rtStat          metric.RollingCounter
+	passStat        *rw.RollingWindow
+	rttStat         *rw.RollingWindow
 	inFlight        int64 // requests in dealing
 	winBucketPerSec int64 //
 
@@ -62,9 +60,8 @@ func NewLimiter(conf *Config) limit.Limiter {
 
 	size := conf.WinBucket
 	bucketDuration := conf.Window / time.Duration(conf.WinBucket)
-	opt := metric.RollingCounterOpts{Size: size, BucketDuration: bucketDuration}
-	passStat := metric.NewRollingCounter(opt)
-	rtStat := metric.NewRollingCounter(opt)
+	passStat := rw.NewRollingWindow(uint32(size), bucketDuration)
+	rtStat := rw.NewRollingWindow(uint32(size), bucketDuration)
 	var getter cpuGetter = func() int64 {
 		return atomic.LoadInt64(&cpu)
 	}
@@ -73,7 +70,7 @@ func NewLimiter(conf *Config) limit.Limiter {
 		cpu:             getter,
 		conf:            conf,
 		passStat:        passStat,
-		rtStat:          rtStat,
+		rttStat:         rtStat,
 		winBucketPerSec: int64(time.Second) / (int64(conf.Window) / int64(conf.WinBucket)), // 1 / 10 * 1000 = 100
 	}
 
@@ -83,26 +80,17 @@ func NewLimiter(conf *Config) limit.Limiter {
 func (l *BBR) maxPASS() int64 {
 	rawMaxPass := atomic.LoadInt64(&l.rawMaxPass)
 	if rawMaxPass > 0 && l.passStat.TimeSpan() < 1 {
+		// just in one bucket duration, no need to do Stat again
 		return rawMaxPass
 	}
 
-	f := l.passStat.Reduce(func(iterator metric.Iterator) (r float64) {
-		r = 1.0
-
-		for i := 1; iterator.Next() && i < l.conf.WinBucket; i++ {
-			bucket := iterator.Bucket()
-			count := 0.0
-			for _, p := range bucket.Points {
-				count += p
-			}
-
-			r = math.Max(r, count)
-		}
-
-		return
+	// stat from window.buckets
+	r := 1.0
+	l.passStat.Iterate(func(b *rw.Bucket) {
+		math.Max(r, float64(b.Count()))
 	})
 
-	rawMaxPass = int64(f)
+	rawMaxPass = int64(r)
 	if rawMaxPass == 0 {
 		rawMaxPass = 1
 	}
@@ -111,38 +99,23 @@ func (l *BBR) maxPASS() int64 {
 	return rawMaxPass
 }
 
-// minRT get minimum RT from rtStat
-// FIXME: minRT is not right
+// minRT get minimum RT from rttStat
 func (l *BBR) minRT() int64 {
 	rawMinRT := atomic.LoadInt64(&l.rawMinRT)
-	if rawMinRT > 0 && l.rtStat.TimeSpan() < 1 {
+	if rawMinRT > 0 && l.rttStat.TimeSpan() < 1 {
 		return rawMinRT
 	}
 
-	f := l.rtStat.Reduce(func(iterator metric.Iterator) (r float64) {
-		r = math.MaxFloat64
-
-		for i := 1; iterator.Next() && i < l.conf.WinBucket; i++ {
-			bucket := iterator.Bucket()
-			if len(bucket.Points) == 0 {
-				continue
-			}
-			total := 0.0
-			for _, p := range bucket.Points {
-				total += p
-			}
-			avg := total / float64(bucket.Count)
-			r = math.Min(r, avg)
-		}
-
-		return r
+	r := math.MaxFloat64
+	l.rttStat.Iterate(func(b *rw.Bucket) {
+		// FIXME: avg is not so good. maybe p99 or p90
+		r = math.Min(r, b.Avg())
 	})
 
-	rawMinRT = int64(math.Ceil(f))
+	rawMinRT = int64(math.Ceil(r))
 	if rawMinRT <= 0 {
 		rawMinRT = 1
 	}
-
 	atomic.StoreInt64(&l.rawMinRT, rawMinRT)
 
 	return rawMinRT
@@ -233,7 +206,7 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 
 	return func(do limit.DoneInfo) {
 		rt := int64((time.Since(initTime) - start) / time.Millisecond)
-		l.rtStat.Add(rt)
+		l.rttStat.Add(rt)
 		atomic.AddInt64(&l.inFlight, -1)
 
 		switch do.Op {
@@ -243,6 +216,5 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 		default:
 			return
 		}
-
 	}, nil
 }

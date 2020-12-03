@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	cpustat "github.com/yeqown/ratelimit/pkg/cpu"
+	cpustat "github.com/yeqown/ratelimit/internal/cpu"
 )
 
 var (
