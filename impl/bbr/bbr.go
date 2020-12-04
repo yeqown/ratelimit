@@ -111,70 +111,72 @@ func (l *BBR) minRTT() int64 {
 }
 
 // maxFlight = math.Floor((MaxPass * MinRTT * WindowSize)/1000 + 0.5)
+// estimate how many request could be accepted by server in 1 second.
 func (l *BBR) maxFlight() float64 {
-	return float64(l.maxComplete()*l.minRTT()*l.bps) / 1000.0
+	return float64(l.maxComplete()*l.bps*l.minRTT()) / 1000.0
 }
 
-//// https://github.com/alibaba/sentinel-golang/blob/master/core/system/slot.go
-//func (l *BBR) shouldDropV2() bool {
-//	cpu := l.cpu()
-//	if cpu > l.conf.CPUThreshold {
-//		if !l.checkSimple() {
-//			return false
-//		}
-//	}
-//
-//	return true
-//}
-
-//func (l *BBR) checkSimple() bool {
-//	concurrency := atomic.LoadInt64(&l.inflight)
-//	minRt := l.minRTT()
-//	maxComplete := l.maxComplete()
-//	if concurrency > 1 && float64(concurrency) > float64(maxComplete*minRt)/1000.0 {
-//		return false
-//	}
-//
-//	return true
-//}
-
-// shouldDrop means is there need to limit request
-
-func (l *BBR) shouldDrop() bool {
-	if l.cpu() < l.conf.CPUThreshold {
-		// cpu is less than conf.CPUThreshold, then get prevDrop
-		prevDrop, _ := l.prevDrop.Load().(time.Duration)
-		if prevDrop == 0 {
-			// cpu is ok and no previous dropped request, just complete
-			return false
+// https://github.com/alibaba/sentinel-golang/blob/master/core/system/slot.go
+func (l *BBR) shouldDropV2() bool {
+	cpu := l.cpu()
+	//println(cpu, l.conf.CPUThreshold)
+	if cpu > l.conf.CPUThreshold {
+		if !l.checkSimple() {
+			return true
 		}
+	}
 
-		if time.Since(_InitTime)-prevDrop <= time.Second {
-			// if previous dropped request happened before and over than 1s.
-			// this means to limit request
-			inFlight := atomic.LoadInt64(&l.inflight)
-			return inFlight > 1 && float64(inFlight) > l.maxFlight()
-		}
+	return false
+}
 
-		// no need to limit and drop request.
-		// clear previous dropped request gap
-		l.prevDrop.Store(time.Duration(0))
+func (l *BBR) checkSimple() bool {
+	concurrency := atomic.LoadInt64(&l.inflight)
+	minRt := l.minRTT()
+	maxComplete := l.maxComplete()
+	if concurrency > 1 && float64(concurrency) > float64(maxComplete*minRt)/1000.0 {
 		return false
 	}
 
-	// cpu is exceed limit
-	inFlight := atomic.LoadInt64(&l.inflight)
-	drop := inFlight > 1 && float64(inFlight) > l.maxFlight()
-	if drop {
-		prevDrop, _ := l.prevDrop.Load().(time.Duration)
-		if prevDrop == 0 {
-			// update the prevDrop at when only the current request should drop and prevDrop is not exists
-			l.prevDrop.Store(time.Since(_InitTime))
-		}
-	}
-
-	return drop
+	return true
 }
+
+//
+//// shouldDrop means is there need to limit request.
+//func (l *BBR) shouldDrop() bool {
+//	if l.cpu() < l.conf.CPUThreshold {
+//		// cpu is less than conf.CPUThreshold, then get prevDrop
+//		prevDrop, _ := l.prevDrop.Load().(time.Duration)
+//		if prevDrop == 0 {
+//			// cpu is ok and no previous dropped request, just complete
+//			return false
+//		}
+//
+//		if time.Since(_InitTime)-prevDrop <= time.Second {
+//			// if previous dropped request happened before and over than 1s.
+//			// this means to limit request
+//			inFlight := atomic.LoadInt64(&l.inflight)
+//			return inFlight > 1 && float64(inFlight) > l.maxFlight()
+//		}
+//
+//		// no need to limit and drop request.
+//		// clear previous dropped request gap
+//		l.prevDrop.Store(time.Duration(0))
+//		return false
+//	}
+//
+//	// cpu is exceed limit
+//	inFlight := atomic.LoadInt64(&l.inflight)
+//	drop := inFlight > 1 && float64(inFlight) > l.maxFlight()
+//	if drop {
+//		prevDrop, _ := l.prevDrop.Load().(time.Duration)
+//		if prevDrop == 0 {
+//			// update the prevDrop at when only the current request should drop and prevDrop is not exists
+//			l.prevDrop.Store(time.Since(_InitTime))
+//		}
+//	}
+//
+//	return drop
+//}
 
 // statForDebug contains the metrics' snapshot of bbr.
 type statForDebug struct {
@@ -204,10 +206,7 @@ func (l *BBR) Allow(ctx context.Context, opts ...limit.AllowOption) (func(info l
 		opt.Apply(&allowOpts)
 	}
 
-	//if l.shouldDrop() {
-	//	return nil, limit.ErrLimitExceed
-	//}
-	if l.shouldDrop() {
+	if l.shouldDropV2() {
 		return nil, limit.ErrLimitExceed
 	}
 
