@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/yeqown/ratelimit"
-	"github.com/yeqown/ratelimit/limiter/bbr"
+	"github.com/yeqown/ratelimit/impl/bbr"
 )
 
 func init() {
@@ -19,27 +19,23 @@ func main() {
 		var val float64
 
 		// mock CPU cost operation
-		for i := 0; i < 1000000; i++ {
+		for i := 0; i < 100000; i++ {
 			val = 999.9999999 * 88888.88888 * 77777.77777 * rand.Float64()
 		}
 
 		_, _ = fmt.Fprintf(w, "val=%f", val)
 	}
-
-	// empty
-	//http.HandleFunc("/benchmark", f)
-
 	// use limiter
-	http.HandleFunc("/benchmark", withRatelimiter(f))
+	http.HandleFunc("/benchmark", withBBR(f))
 
 	// start server
 	fmt.Println("running on: http://127.0.0.1:8080")
 	panic(http.ListenAndServe(":8080", nil))
 }
 
-// ratelimit middleware
-func withRatelimiter(f http.HandlerFunc) http.HandlerFunc {
-	l := bbr.NewLimiter(nil)
+// withBBR rate-limit middleware
+func withBBR(f http.HandlerFunc) http.HandlerFunc {
+	l := bbr.New(nil)
 
 	return func(w http.ResponseWriter, req *http.Request) {
 		defer func() {
