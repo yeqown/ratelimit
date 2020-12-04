@@ -37,7 +37,7 @@ func main() {
 
 // ratelimit middleware
 func withRatelimiter(f http.HandlerFunc) http.HandlerFunc {
-	l := bbr.NewLimiter(nil)
+	l := bbr.New(nil)
 
 	return func(w http.ResponseWriter, req *http.Request) {
 		done, err := l.Allow(req.Context())

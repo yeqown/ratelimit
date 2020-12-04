@@ -24,7 +24,7 @@ type Config struct {
 	CPUThreshold int64
 }
 
-func comptaibleConfig(conf *Config) {
+func compatibleConfig(conf *Config) *Config {
 	if conf == nil {
 		conf = defaultConf
 	}
@@ -36,8 +36,10 @@ func comptaibleConfig(conf *Config) {
 		conf.WinBucket = defaultConf.WinBucket
 	}
 	if conf.CPUThreshold == 0 {
-		conf.CPUThreshold = int64(float64(cores()) * 2.5)
+		conf.CPUThreshold = int64(float32(cores()) * 2.5 * 100)
 	}
+
+	return conf
 }
 
 func cores() int {

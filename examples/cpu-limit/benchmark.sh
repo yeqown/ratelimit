@@ -1,1 +1,1 @@
-go-wrk -c=1000 -t=30s http://127.0.0.1:8080/benchmark
+go-wrk -c=1000 -t=30 http://127.0.0.1:8080/benchmark

@@ -20,16 +20,13 @@ func main() {
 		var val float64
 
 		// mock CPU cost operation
-		for i := 0; i < 1000000; i++ {
+		for i := 0; i < 1000000+rand.Intn(1000); i++ {
 			val = 999.9999999 * 88888.88888 * 77777.77777 * rand.Float64()
+			//println(val)
 		}
 
 		_, _ = fmt.Fprintf(w, "val=%f", val)
 	}
-
-	// empty
-	//http.HandleFunc("/benchmark", f)
-
 	// use limiter
 	http.HandleFunc("/benchmark", withRatelimiter(f))
 
@@ -40,7 +37,7 @@ func main() {
 
 // ratelimit middleware
 func withRatelimiter(f http.HandlerFunc) http.HandlerFunc {
-	l := bbr.NewLimiter(nil)
+	l := bbr.New(nil)
 
 	return func(w http.ResponseWriter, req *http.Request) {
 		defer func() {

@@ -48,7 +48,7 @@ func (b *Bucket) append(val int64) {
 	b.mu.Unlock()
 }
 func (b *Bucket) Count() uint32 {
-	return b.count
+	return atomic.LoadUint32(&b.count)
 }
 
 // DONE: THINK ABOUT OVERFLOW IF AVG = SUM / COUNT

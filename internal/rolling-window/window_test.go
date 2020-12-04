@@ -1,11 +1,17 @@
 package rollingwin
 
 import (
+	"math"
+	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 func Test_RollingWindow(t *testing.T) {
 	w := NewRollingWindow(4, 1*time.Second)
@@ -45,6 +51,40 @@ func Test_RollingWindow_Add(t *testing.T) {
 	w.Iterate(func(b *Bucket) {
 		t.Logf("%+v", b)
 	})
+}
+
+func Test_Iterate(t *testing.T) {
+	w := NewRollingWindow(100, 100*time.Millisecond)
+
+	var debug = func() {
+		minAvg := math.MaxFloat64
+		maxCount := uint32(0)
+		w.Iterate(func(b *Bucket) {
+			if b.Count() > maxCount {
+				maxCount = b.Count()
+			}
+
+			if b.Count() > 0 && b.Avg() < minAvg {
+				minAvg = b.Avg()
+			}
+		})
+
+		t.Log(minAvg, maxCount)
+	}
+
+	for i := 0; i < 700; i++ {
+		if i%100 == 0 {
+			time.Sleep(1 * time.Second)
+			if i > 500 {
+				debug()
+			}
+		}
+
+		if i%500 == 0 {
+			debug()
+		}
+		w.Add(int64(rand.Uint32()))
+	}
 }
 
 func BenchmarkRollingWindow_Add(b *testing.B) {

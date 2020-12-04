@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	_QueryCPUdelay = 100 * time.Second
+	_QueryCPUdelay = 100 * time.Millisecond
 )
 
 var (
@@ -27,13 +27,17 @@ func cpugetter() int64 {
 
 // cpuproc always get "Moving Average" of current cpu usage.
 // cpu = cpuᵗ⁻¹ * decay + cpuᵗ * (1 - decay)
-func cpuproc() {
+func cpuproc(_init int64) {
+	if _init > 0 {
+		atomic.StoreInt64(&cpu, _init)
+	}
+
 	ticker := time.NewTicker(_QueryCPUdelay)
 	defer func() {
 		ticker.Stop()
 		if err := recover(); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "rate.limit.cpuproc() err(%+v)", err)
-			go cpuproc()
+			go cpuproc(_init)
 		}
 	}()
 
