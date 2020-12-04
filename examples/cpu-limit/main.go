@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yeqown/ratelimit/impl/bbr"
-
 	"github.com/yeqown/ratelimit"
+	"github.com/yeqown/ratelimit/impl/bbr"
 )
 
 func init() {
@@ -22,7 +21,6 @@ func main() {
 		// mock CPU cost operation
 		for i := 0; i < 100000; i++ {
 			val = 999.9999999 * 88888.88888 * 77777.77777 * rand.Float64()
-			//println(val)
 		}
 
 		_, _ = fmt.Fprintf(w, "val=%f", val)

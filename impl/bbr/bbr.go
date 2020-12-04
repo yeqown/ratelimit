@@ -110,23 +110,25 @@ func (l *BBR) minRTT() int64 {
 	return rawMinRTT
 }
 
-// maxFlight = math.Floor((MaxPass * MinRTT * WindowSize)/1000 + 0.5)
-// estimate how many request could be accepted by server in 1 second.
-func (l *BBR) maxFlight() float64 {
-	return float64(l.maxComplete()*l.bps*l.minRTT()) / 1000.0
-}
-
 // https://github.com/alibaba/sentinel-golang/blob/master/core/system/slot.go
 func (l *BBR) shouldDropV2() bool {
 	cpu := l.cpu()
-	//println(cpu, l.conf.CPUThreshold)
 	if cpu > l.conf.CPUThreshold {
 		if !l.checkSimple() {
 			return true
 		}
 	}
 
+	// if cpu is under of CPUThreshold, no strategy for this case.
+	// TODO(@yeqown): do something or no need to do.
+
 	return false
+}
+
+// maxFlight = math.Floor((MaxPass * MinRTT * WindowSize)/1000 + 0.5)
+// estimate how many request could be accepted by server in 1 second.
+func (l *BBR) maxFlight() float64 {
+	return float64(l.maxComplete()*l.minRTT()) / 1000.0
 }
 
 func (l *BBR) checkSimple() bool {
@@ -134,6 +136,7 @@ func (l *BBR) checkSimple() bool {
 	minRt := l.minRTT()
 	maxComplete := l.maxComplete()
 	if concurrency > 1 && float64(concurrency) > float64(maxComplete*minRt)/1000.0 {
+		//if concurrency > 1 && float64(concurrency) > l.maxFlight() {
 		return false
 	}
 
