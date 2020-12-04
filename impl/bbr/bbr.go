@@ -15,19 +15,24 @@ var (
 )
 
 // BBR implements bbr-like limiter, it is inspired by sentinel.
+//
 // https://github.com/alibaba/Sentinel/wiki/%E7%B3%BB%E7%BB%9F%E8%87%AA%E9%80%82%E5%BA%94%E9%99%90%E6%B5%81
 type BBR struct {
-	conf     *Config
-	cpu      func() int64
+	conf *Config
+	cpu  func() int64
+
+	// complete contains count of completed request count in one bucket duration.
 	complete *rw.RollingWindow
 
 	// rt contains all completed requests round-trip time (millisecond).
 	rt *rw.RollingWindow
 
-	// inflight requests in dealing
+	// inflight requests in dealing per second.
+	// FIXME: correct QPS count
 	inflight int64
 
 	// bps bucket count in rw.RollingWindow per second
+	// FIXME: should be used into maxFlight.
 	bps int64
 
 	// prevDrop the previous dropped request's time gap from _InitTime
@@ -44,14 +49,13 @@ type BBR struct {
 // New create a BBR limiter
 func New(conf *Config) limit.Limiter {
 	conf = compatibleConfig(conf)
-
-	bucketDuration := conf.Window / time.Duration(conf.WinBucket)
+	d := conf.Window / time.Duration(conf.WinBucket) // bucket duration of each bucket.
 
 	l := &BBR{
 		conf:     conf,
 		cpu:      cpugetter,
-		complete: rw.NewRollingWindow(conf.WinBucket, bucketDuration),
-		rt:       rw.NewRollingWindow(conf.WinBucket, bucketDuration),
+		complete: rw.NewRollingWindow(conf.WinBucket, d),
+		rt:       rw.NewRollingWindow(conf.WinBucket, d),
 		inflight: 0,
 		bps:      int64(conf.WinBucket) / int64(conf.Window/time.Second),
 	}
@@ -85,7 +89,10 @@ func (l *BBR) maxComplete() int64 {
 	return c
 }
 
-// minRTT get minimum RT from rt
+// minRTT get minimum round-trip time from rt (RollingWindow).
+//
+// the minimum RTT is an metric of one bucket in all window buckets,
+// it only contains one bucket duration data.
 func (l *BBR) minRTT() int64 {
 	rawMinRTT := atomic.LoadInt64(&l.rawMinRT)
 	if rawMinRTT > 0 && l.rt.TimeSpan() < 1 {
@@ -126,7 +133,7 @@ func (l *BBR) shouldDropV2() bool {
 }
 
 // maxFlight = math.Floor((MaxPass * MinRTT * WindowSize)/1000 + 0.5)
-// estimate how many request could be accepted by server in 1 second.
+// estimate how many request could be accepted by server in bucket duration.
 func (l *BBR) maxFlight() float64 {
 	return float64(l.maxComplete()*l.minRTT()) / 1000.0
 }
@@ -143,7 +150,6 @@ func (l *BBR) checkSimple() bool {
 	return true
 }
 
-//
 //// shouldDrop means is there need to limit request.
 //func (l *BBR) shouldDrop() bool {
 //	if l.cpu() < l.conf.CPUThreshold {
